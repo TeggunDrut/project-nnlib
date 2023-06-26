@@ -1,6 +1,8 @@
 const { log } = require("console");
 const data = require("./data.json");
 const fs = require("fs");
+const cycle = require("./cycle.js");
+// cycle functions: decycle, retrocycle
 
 let d = {
   X: [],
@@ -32,42 +34,41 @@ const Sigmoid = () => {
   };
 };
 
-class Neuron {
-  constructor(options) {
-    this.id = options.id;
-    this.inputs = [];
-    this.outputs = [];
-    this.raw = null;
-    this.output = null;
-    this.is_bias = options && options.bias ? true : false;
-
-    this.activationFunc = function (x) {
-      return 1 / (1 + Math.exp(-x));
-    };
-  }
-  activate() {
-    this.raw = 0;
-
-    if (this.is_bias) {
-      this.output = -1;
-    } else {
-      for (var i = 0; i < this.inputs.length; i++) {
-        var input = this.inputs[i];
-        this.raw += input.from.output * input.weight;
-      }
-
-      this.output = sigmoid(this.raw);
-    }
-  }
-
-  add_input(input) {
-    this.inputs.push(input);
-  }
-
-  add_output(output) {
-    this.outputs.push(output);
-  }
+function Neuron(options) {
+  this.id = options.id;
+  this.inputs = options.inputs !== undefined ? options.inputs : [];
+  this.outputs = options.outputs !== undefined ? options.outputs : [];
+  this.raw = options.raw !== undefined ? options.raw : null;
+  this.output = options.output !== undefined ? options.output : null;
+  this.is_bias = options && options.is_bias ? true : false;
 }
+
+Neuron.prototype.activationFunc = function (x) {
+  return 1 / (1 + Math.exp(-x));
+};
+Neuron.prototype.activate = function () {
+  this.raw = 0;
+
+  if (this.is_bias) {
+    this.output = -1;
+  } else {
+    for (var i = 0; i < this.inputs.length; i++) {
+      var input = this.inputs[i];
+      this.raw += input.from.output * input.weight;
+    }
+
+    this.output = 1 / (1 + Math.exp(-this.raw));
+  }
+};
+
+Neuron.prototype.add_input = function (input) {
+  this.inputs.push(input);
+};
+
+Neuron.prototype.add_output = function (output) {
+  this.outputs.push(output);
+};
+
 class Connection {
   constructor(from, to, weight) {
     this.weight = weight || this.random_weight();
@@ -157,7 +158,23 @@ class NeuralNetwork {
 
       for (var j = 0; j < layer.length; j++) {
         var neuron = layer[j];
-        neuron.activate();
+
+        // if (typeof neuron.activate === "function") {
+          neuron.activate();
+        // } else {
+        //   console.log(
+        //     "No activation:",
+        //     neuron.id,
+        //     Object.getPrototypeOf(neuron) === Neuron.prototype
+        //   );
+        //   neuron.activate = Neuron.prototype.activate;
+        //   neuron.activate();
+        //   console.log(
+        //     "Activated",
+        //     neuron.output,
+        //     Object.getPrototypeOf(neuron) === Neuron.prototype
+        //   );
+        // }
       }
     }
   }
@@ -166,7 +183,6 @@ class NeuralNetwork {
     // delta[j] := g_prime(input[j]) * (y - a)
 
     var deltas = [];
-
     var output_layer = this.layers[this.layers.length - 1];
 
     for (var i = 0; i < output_layer.length; i++) {
@@ -270,7 +286,11 @@ class NeuralNetwork {
       // if(layerIndex === 0) return;
       layer.forEach((neuron, j) => {
         const neuronId = neuron.id;
-
+        const neuronBias = neuron.is_bias;
+        const neuronOutput = neuron.output;
+        const neuronRaw = neuron.raw;
+        // neuronOutput != 0 ? console.log(neuronId, neuronOutput) : null;
+        // else console.log(neuron);
         // Make sure the Neuron ID exists in our map
         if (!weights[neuronId]) {
           weights[neuronId] = {
@@ -286,6 +306,9 @@ class NeuralNetwork {
             id: input.from.id,
             isInput: true,
             weight: input.weight,
+            is_bias: neuronBias,
+            output: neuronOutput,
+            raw: neuronRaw,
           });
         });
 
@@ -295,11 +318,70 @@ class NeuralNetwork {
             id: output.to.id,
             isInput: false,
             weight: output.weight,
+            is_bias: neuronBias,
+            output: neuronOutput,
+            raw: neuronRaw,
           });
         });
       });
     });
     return weights;
+  }
+  setWeights(weights) {
+    const layers = {};
+    Object.values(weights).forEach((weightedNueron) => {
+      let nWeights = weightedNueron.weights;
+      let nId = weightedNueron.id;
+      let nBias = weightedNueron.is_bias;
+      let nRaw = weightedNueron.raw;
+      // else console.log("not bias L", weightedNueron);
+
+      if (!layers[weightedNueron.layer]) {
+        layers[weightedNueron.layer] = [];
+      }
+
+      // Create new Neuron
+      const neuron = new Neuron({ id: nId });
+      neuron.outputs = [];
+      neuron.inputs = [];
+
+      // Add weights to the Neuron
+      nWeights.forEach((weight, i) => {
+        let from = new Neuron({
+          id: nId,
+          is_bias: nBias,
+          output: weight.output,
+          raw: weight.raw,
+        });
+        let to = new Neuron({
+          id: weight.id,
+          is_bias: weight.is_bias,
+          output: weight.output,
+          raw: weight.raw,
+        });
+
+        let con = new Connection(from, to);
+        con.weight = weight.weight;
+
+        if (weight.isInput) {
+          neuron.inputs.push(con);
+        } else {
+          neuron.outputs.push(con);
+        }
+      });
+
+      // Add this Neuron to the layer
+      const currentLayer = layers[weightedNueron.layer];
+      currentLayer.push(neuron);
+    });
+
+    const newLayers = [];
+    const isInLayer = {};
+    Object.values(layers).forEach((layer) => {
+      newLayers.push(layer);
+    });
+
+    return newLayers;
   }
 }
 
@@ -308,19 +390,111 @@ for (let i = 0; i < 10; i++) {
   d.y.push(numToBinary(data["labels"][i]));
 }
 
-var nn = new NeuralNetwork([4, 5, 5, 10], d, {
-  iterations: 100000,
+var nn = new NeuralNetwork([784, 8, 8, 10], d, {
+  iterations: 10000,
 });
 // log("Training...");
 let threshold = 0.5;
-// nn.train(threshold);
+nn.train(threshold);
 
-// use cycle.js to save the nn
-const cycle = require("./cycle.js");
-const sigmoid = require("./nn/ActivationFunctions");
+console.log("Saving...");
+
+const weights = nn.getWeights();
+const newLayers = nn.setWeights(weights);
+fs.writeFileSync("network.json", JSON.stringify(newLayers));
+
+console.log(
+  "406", nn.predict([
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0,
+    0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0,
+    0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    1, 0, 0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0,
+  ])
+);
+
+const data2 = JSON.parse(fs.readFileSync("network.json", "utf8"));
+
+let newLayers2 = [];
+data2.forEach((layer) => {
+  let temp = [];
+  layer.forEach((neuron) => {
+    let inputs = [];
+    neuron.inputs.forEach((input) => {
+      let from = new Neuron({
+        id: input.from.id,
+        is_bias: input.from.is_bias,
+        output: input.from.output,
+        raw: input.from.raw,
+      });
+      let to = new Neuron({
+        id: input.to.id,
+        is_bias: input.to.is_bias,
+        output: input.to.output,
+        raw: input.to.raw,
+      });
+      inputs.push(new Connection(from, to));
+    });
+
+    let outputs = [];
+    neuron.outputs.forEach((output) => {
+      let from = new Neuron({
+        id: output.from.id,
+        is_bias: output.from.is_bias,
+        raw: output.from.raw,
+      });
+      let to = new Neuron({
+        id: output.to.id,
+        is_bias: output.to.is_bias,
+        raw: output.to.raw,
+      });
+      outputs.push(new Connection(from, to));
+    });
+    const n = new Neuron({
+      id: neuron.id,
+      inputs: inputs,
+      outputs: outputs,
+      is_bias: neuron.is_bias,
+      raw: neuron.raw,
+    });
+    temp.push(n);
+  });
+  newLayers2.push(temp);
+});
+let nnCopy = new NeuralNetwork(nn.size, nn.data, { iterations: nn.iterations });
+nnCopy.layers = nn.layers;
+
+nn.layers = newLayers2;
 
 // console.log(
-//   nn.predict([
+//   "501", nn.predict([
 //     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 //     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 //     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -356,57 +530,245 @@ const sigmoid = require("./nn/ActivationFunctions");
 //   ])
 // );
 
+// nn.layers = newLayers;
 
-console.log("Saving...");
-
-console.log(nn.layers[0]);
-
-// fs.writeFileSync("network.json", JSON.stringify(cycle.decycle(nn)));
-
-// // load the network
-// const nnData = cycle.retrocycle(JSON.parse(fs.readFileSync("network.json")));
-// const nn2 = new NeuralNetwork(nnData.size, nnData.data);
-// nn2.fromJSON(nnData);
+var nn2 = new NeuralNetwork([768, 8, 8, 10], d, {
+  iterations: 10000,
+});
+// nn2.layers = newLayers2;
 // nn2.train(threshold);
+// console.log(
+//   "544", nn2.predict([
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0,
+//     0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0,
+//     0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     1, 0, 0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0,
+//   ])
+// );
 
-// nn.train(threshold);
-const weights = nn.getWeights();
-// console.log(nn.getWeights());
+const json2 = fs.readFileSync("./weights.json", "utf8");
+const data3 = JSON.parse(json2);
 
-function setWeights(weights) {
-  const layers = {};
-  Object.values(weights).forEach(weightedNueron => {
-    let nWeights = weightedNueron.weights;
-    let nLayer   = weightedNueron.layer;
-    let nId      = weightedNueron.id;
+// console.log(data3[1][0], Object.getPrototypeOf(data3[1][0]) === Neuron.prototype);
+// // log first 100
+// nn2.layers = data3;
 
-    if (!layers[weightedNueron.layer]) {
-      layers[weightedNueron.layer] = [];
-    }
-    
-    // Create new Neuron
-    const neuron = new Neuron({ id: nId });
-    neuron.outputs = [];
+// console.log(
+//   "587",
+//   nn2.predict([
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0,
+//     0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0,
+//     0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     1, 0, 0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//     0, 0, 0, 0, 0, 0, 0, 0, 0,
+//   ])
+// );
 
-    // Add weights to the Neuron
-    nWeights.forEach((weight, i) => {
-      let from = new Neuron({ id: nId });
-      let to = new Neuron({ id: weight.id });
-      let con = new Connection(from, to);
-      con.weight = weight.weight;
-      neuron.outputs.push(con);
+// fs.writeFileSync("nn.json", JSON.stringify(cycle.decycle(nn.layers)));
+
+function e(arr) {
+  let newLayers = [];
+  for (let i = 0; i < arr.length; i++) {
+    let temp = [];
+    arr[i].forEach((neuron, neuronIndex) => {
+      let inputs = [];
+      let outputs = [];
+
+      neuron.inputs.forEach((input, inputIndex) => {
+        let from = new Neuron({
+          id: input.from.id,
+          is_bias: input.from.is_bias,
+          raw: input.from.raw,
+          output: input.from.output,
+          inputs: input.from.inputs,
+          outputs: input.from.outputs,
+        });
+        let to = new Neuron({
+          id: input.to.id,
+          is_bias: input.to.is_bias,
+          raw: input.to.raw,
+          output: input.to.output,
+          inputs: input.to.inputs,
+          outputs: input.to.outputs,
+        });
+        let con = new Connection(from, to, input.weight);
+        inputs.push(con);
+      });
+      neuron.outputs.forEach((output, outputIndex) => {
+        let from = new Neuron({
+          id: output.from.id,
+          is_bias: output.from.is_bias,
+          raw: output.from.raw,
+          output: output.from.output,
+          inputs: output.from.inputs,
+          outputs: output.from.outputs,
+        });
+        let to = new Neuron({
+          id: output.to.id,
+          is_bias: output.to.is_bias,
+          raw: output.to.raw,
+          output: output.to.output,
+          inputs: output.to.inputs,
+          outputs: output.to.outputs,
+        });
+
+        let con = new Connection(from, to, output.weight);
+        outputs.push(con);
+      });
+
+      inputs.forEach((input, inputIndex) => {
+        input.from.inputs = inputs;
+        input.to.inputs = inputs;
+      });
+      outputs.forEach((output, outputIndex) => {
+        output.from.outputs = outputs;
+        output.to.outputs = outputs;
+      });
+
+      let n = new Neuron({
+        id: neuron.id,
+        is_bias: neuron.is_bias,
+        raw: neuron.raw,
+        output: neuron.output,
+        inputs: inputs,
+        outputs: outputs,
+      });
+      temp.push(n);
     });
-
-    // Add this Neuron to the layer
-    const currentLayer = layers[weightedNueron.layer];
-    currentLayer.push(neuron);
-  })
-  return layers;;
+    newLayers.push(temp);
+  }
+  return newLayers;
 }
-// setWeights(weights);
+nn2.layers = nn.layers;
 
-const test = setWeights(weights);
-console.log(test);
-nn.layers = test;
+console.log(
+  "693",
+  nn2.predict([
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0,
+    0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0,
+    0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    1, 0, 0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0,
+  ])
+);
 
-nn.train()
+console.log(
+  "693",
+  nn.predict([
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0,
+    0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0,
+    0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    1, 0, 0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0,
+  ])
+);
+// nn2.train(threshold);
